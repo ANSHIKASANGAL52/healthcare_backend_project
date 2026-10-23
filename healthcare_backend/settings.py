@@ -9,12 +9,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load environment variables from .env file
 load_dotenv(BASE_DIR / '.env')
 
-# Quick-start development settings - unsuitable for production
+from django.core.exceptions import ImproperlyConfigured
+
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-healthcare-backend-super-secret-key-change-in-production')
 
 DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1')
 
-ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0,*').split(',') if h.strip()]
+if not DEBUG and ('insecure' in SECRET_KEY or SECRET_KEY == 'django-insecure-healthcare-backend-super-secret-key-change-in-production'):
+    raise ImproperlyConfigured("A secure, unique SECRET_KEY must be configured in the environment for production.")
+
+ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0').split(',') if h.strip()]
 
 # Application definition
 INSTALLED_APPS = [

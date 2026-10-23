@@ -2,22 +2,22 @@
 
 A robust, production-grade backend system for a healthcare application built using **Django**, **Django REST Framework (DRF)**, **SimpleJWT**, and **PostgreSQL**.
 
-The system enables secure user registration and login with JWT authentication, along with full CRUD capabilities for managing patient records, doctor profiles, and assigning doctors to patients with validation and security controls.
+The system enables secure user registration and login with JWT authentication, along with full CRUD capabilities for managing patient records, doctor profiles, and assigning doctors to patients with strict authorization controls, data validation, and uniform error handling.
 
 ---
 
 ## 🌟 Key Features
 
-- **JWT Authentication**: Secure stateless token authentication (`djangorestframework-simplejwt`) with Bearer tokens for access and refresh rotation.
-- **Custom User Model**: Dedicated user model with email-based authentication and full name fields.
-- **Patient Management**: User-scoped patient records ensuring authenticated users only manage their own patients.
-- **Doctor Management**: Complete cataloging of medical specialists with unique license verification and contact tracking.
-- **Patient-Doctor Mapping**: Assign doctors to patients with duplicate-assignment prevention, retrieval of all doctors assigned to a patient, and mapping deletion.
-- **Uniform Error Handling**: Centralized exception handler providing clean, standardized JSON response structures across all HTTP status codes.
-- **PostgreSQL Database**: Configured for PostgreSQL 16+ using the official modern `psycopg` driver, with environment variable overrides.
+- **JWT Authentication**: Secure stateless token authentication (`djangorestframework-simplejwt`) with Bearer tokens for access and refresh token lifecycle.
+- **Custom User Model**: Dedicated user model with email-based authentication and name field.
+- **Strict Patient Authorization (IDOR Protected)**: Patients are strictly scoped to the user who created them. Users cannot view, update, or delete other users' patient records by changing an ID in the URL.
+- **Protected Doctor Management**: Any authenticated user can view the doctor directory, but only the creator of the doctor profile (or staff) can modify or delete doctor records.
+- **Secure Patient-Doctor Mapping**: Assign doctors to patients with verification that the authenticated user owns the patient. Prevents duplicate assignments. Viewing assigned doctors (`GET /api/mappings/<patient_id>/`) and deleting mappings (`DELETE /api/mappings/<id>/`) enforce patient ownership.
+- **Uniform Error Handling**: Centralized exception handler providing clean, standardized JSON response structures across all HTTP status codes (400, 401, 403, 404, 500).
+- **PostgreSQL Database**: Built for PostgreSQL using the official modern `psycopg` driver, configurable via environment variables (`.env`). Includes fallback toggle for local standalone testing.
 - **Interactive API Documentation**: Live Swagger UI (`/api/docs/`) and ReDoc (`/api/redoc/`) powered by `drf-spectacular`.
-- **Docker Ready**: Pre-configured `docker-compose.yml` and `Dockerfile` for seamless deployment with containerized PostgreSQL.
-- **Comprehensive Test Suite**: 29 automated unit and integration tests covering authentication, authorization, validation, and CRUD operations.
+- **Docker Ready**: Pre-configured `docker-compose.yml` and `Dockerfile` for seamless deployment with containerized PostgreSQL 16.
+- **Comprehensive Test Suite**: 41 automated unit and integration tests covering authentication, authorization, ownership violations, validation, and CRUD operations.
 - **Ready-to-use Postman Collection**: `Healthcare_Backend.postman_collection.json` with pre-configured requests and token capture scripts.
 
 ---
@@ -29,21 +29,21 @@ peaceful-shannon/
 │
 ├── apps/
 │   ├── accounts/              # CustomUser, Registration, Login & JWT
-│   ├── patients/              # Patient records & user-isolated CRUD
-│   ├── doctors/               # Doctor directory & validation
-│   ├── mappings/              # Patient-Doctor relationship mappings
-│   └── common/                # Unified exception handler & helpers
+│   ├── patients/              # Patient records & strict owner-scoped CRUD
+│   ├── doctors/               # Doctor directory, owner-protected updates
+│   ├── mappings/              # Patient-Doctor relationship mappings with ownership checks
+│   └── common/                # Unified exception handler & standard responses
 │
 ├── healthcare_backend/        # Core Django settings, URLs & WSGI
-│   ├── settings.py            # Environment-driven configuration
+│   ├── settings.py            # Environment-driven configuration & security guards
 │   ├── urls.py                # Root routing & Swagger documentation
 │   └── ...
 │
 ├── Dockerfile                 # Container specification
-├── docker-compose.yml         # Multi-container orchestration (PostgreSQL + Web)
+├── docker-compose.yml         # Multi-container orchestration (PostgreSQL 16 + Web)
 ├── requirements.txt           # Python package dependencies
 ├── .env.example               # Environment variables template
-├── .env                       # Local environment configurations
+├── .env                       # Local environment configurations (git-ignored)
 ├── Healthcare_Backend.postman_collection.json # Exported Postman collection
 └── README.md                  # Project documentation
 ```
@@ -55,7 +55,7 @@ peaceful-shannon/
 - **Python**: 3.11+ / 3.12+ / 3.14+
 - **Django**: 5.1+ / 6.1+
 - **Django REST Framework**: 3.15+
-- **Database**: PostgreSQL 14+ (or SQLite for standalone evaluation)
+- **Database**: PostgreSQL 14+ (or SQLite via `USE_SQLITE=True` for standalone testing)
 - **Authentication**: `djangorestframework-simplejwt`
 - **Documentation**: `drf-spectacular` (OpenAPI 3.0)
 
@@ -71,8 +71,8 @@ Run the backend and PostgreSQL database with a single command:
 docker compose up --build -d
 ```
 
-- PostgreSQL container initializes automatically with health checks.
-- Django runs migrations and starts on `http://localhost:8000`.
+- PostgreSQL 16 container initializes automatically with health checks.
+- Django applies all migrations and starts on `http://localhost:8000`.
 - Interactive Swagger docs: `http://localhost:8000/api/docs/`
 
 To shut down:
@@ -91,7 +91,7 @@ docker compose down -v
    ```
 
 2. **Create and activate a virtual environment**:
-   ```bash
+   ```powershell
    # On Windows (PowerShell):
    python -m venv venv
    .\venv\Scripts\Activate.ps1
@@ -147,6 +147,27 @@ docker compose down -v
 
 ---
 
+## 🔒 Security & Authorization Architecture
+
+### 1. Patient Authorization (IDOR Protection)
+- `POST /api/patients/`: Automatically associates `created_by = request.user`.
+- `GET /api/patients/`: Strictly filtered to only return patients created by the authenticated user (`created_by=request.user`).
+- `GET /api/patients/<id>/`: If a user tries to access a patient ID created by another user, the query returns `404 Not Found`, completely preventing unauthorized reads and ID enumeration.
+- `PUT /api/patients/<id>/` & `DELETE /api/patients/<id>/`: Strictly blocked for non-owners.
+
+### 2. Doctor Management Permissions
+- `GET /api/doctors/` & `GET /api/doctors/<id>/`: Any authenticated user can view doctors in the directory.
+- `POST /api/doctors/`: Any authenticated user can register a doctor (saves `created_by = request.user`).
+- `PUT /api/doctors/<id>/` & `DELETE /api/doctors/<id>/`: Only the user who registered that doctor (or staff) can modify or delete it. Attempts by other users return `403 Forbidden`.
+
+### 3. Patient-Doctor Mapping Ownership Checks
+- `GET /api/mappings/`: Scoped to mappings for patients created by the authenticated user.
+- `POST /api/mappings/`: Verifies that the authenticated user owns the target patient before allowing doctor assignment (returns `403 Forbidden` if unowned). Prevents duplicate doctor assignments to the same patient (`400 Bad Request`).
+- `GET /api/mappings/<patient_id>/`: Verifies that the authenticated user owns the patient before returning assigned doctors (returns `403 Forbidden` if unowned).
+- `DELETE /api/mappings/<id>/`: Verifies that the authenticated user owns the patient in the mapping before deletion (returns `403 Forbidden` if unowned).
+
+---
+
 ## 📚 API Endpoints Reference
 
 ### 1. Authentication APIs
@@ -185,242 +206,64 @@ docker compose down -v
 }
 ```
 
-#### Example: Login User (`POST /api/auth/login/`)
-**Request Body**:
-```json
-{
-  "email": "alice@healthcare.com",
-  "password": "StrongPassword123!"
-}
-```
-**Response (200 OK)**:
-```json
-{
-  "success": true,
-  "message": "Login successful.",
-  "data": {
-    "user": {
-      "id": 1,
-      "name": "Dr. Alice Smith",
-      "email": "alice@healthcare.com"
-    },
-    "tokens": {
-      "access": "eyJhbGciOiJIUzI1NiIs...",
-      "refresh": "eyJhbGciOiJIUzI1NiIs..."
-    }
-  }
-}
-```
-
 ---
 
 ### 2. Patient Management APIs
 
-> [!NOTE]
-> All patient endpoints require header: `Authorization: Bearer <access_token>`.
-> `GET /api/patients/` automatically filters and returns only patients created by the authenticated user.
-
-| Method | Endpoint | Description | Auth Required |
+| Method | Endpoint | Description | Authorization |
 |---|---|---|---|
-| `POST` | `/api/patients/` | Add a new patient | Yes |
-| `GET` | `/api/patients/` | List all patients created by the user | Yes |
-| `GET` | `/api/patients/<id>/` | Get details of a specific patient | Yes |
-| `PUT` | `/api/patients/<id>/` | Update patient details | Yes |
-| `DELETE` | `/api/patients/<id>/` | Delete a patient record | Yes |
-
-#### Example: Add Patient (`POST /api/patients/`)
-**Request Body**:
-```json
-{
-  "name": "John Doe",
-  "age": 38,
-  "gender": "Male",
-  "contact_number": "+1-555-0199",
-  "email": "john.doe@example.com",
-  "address": "742 Evergreen Terrace",
-  "medical_history": "Mild hypertension, seasonal allergies"
-}
-```
-**Response (201 Created)**:
-```json
-{
-  "success": true,
-  "message": "Patient created successfully.",
-  "data": {
-    "id": 1,
-    "name": "John Doe",
-    "age": 38,
-    "gender": "Male",
-    "contact_number": "+1-555-0199",
-    "email": "john.doe@example.com",
-    "address": "742 Evergreen Terrace",
-    "medical_history": "Mild hypertension, seasonal allergies",
-    "created_by": 1,
-    "created_by_name": "Dr. Alice Smith",
-    "created_by_email": "alice@healthcare.com",
-    "created_at": "2026-10-23T10:30:00Z",
-    "updated_at": "2026-10-23T10:30:00Z"
-  }
-}
-```
+| `POST` | `/api/patients/` | Add a new patient | Authenticated User |
+| `GET` | `/api/patients/` | List all patients created by the user | Authenticated User (Scoped) |
+| `GET` | `/api/patients/<id>/` | Get details of a specific patient | Patient Owner / Staff |
+| `PUT` | `/api/patients/<id>/` | Update patient details | Patient Owner / Staff |
+| `DELETE` | `/api/patients/<id>/` | Delete a patient record | Patient Owner / Staff |
 
 ---
 
 ### 3. Doctor Management APIs
 
-| Method | Endpoint | Description | Auth Required |
+| Method | Endpoint | Description | Authorization |
 |---|---|---|---|
-| `POST` | `/api/doctors/` | Add a new doctor | Yes |
-| `GET` | `/api/doctors/` | Retrieve all doctors | Yes |
-| `GET` | `/api/doctors/<id>/` | Get details of a specific doctor | Yes |
-| `PUT` | `/api/doctors/<id>/` | Update doctor details | Yes |
-| `DELETE` | `/api/doctors/<id>/` | Delete a doctor record | Yes |
-
-#### Example: Add Doctor (`POST /api/doctors/`)
-**Request Body**:
-```json
-{
-  "name": "Gregory House",
-  "specialization": "Diagnostic Medicine",
-  "license_number": "MED-NY-84920",
-  "phone": "+1-555-0100",
-  "email": "house@princetonplainsboro.org",
-  "experience_years": 20
-}
-```
-**Response (201 Created)**:
-```json
-{
-  "success": true,
-  "message": "Doctor registered successfully.",
-  "data": {
-    "id": 1,
-    "name": "Gregory House",
-    "specialization": "Diagnostic Medicine",
-    "license_number": "MED-NY-84920",
-    "phone": "+1-555-0100",
-    "email": "house@princetonplainsboro.org",
-    "experience_years": 20,
-    "created_at": "2026-10-23T10:32:00Z",
-    "updated_at": "2026-10-23T10:32:00Z"
-  }
-}
-```
+| `POST` | `/api/doctors/` | Add a new doctor | Authenticated User |
+| `GET` | `/api/doctors/` | Retrieve all doctors | Authenticated User |
+| `GET` | `/api/doctors/<id>/` | Get details of a specific doctor | Authenticated User |
+| `PUT` | `/api/doctors/<id>/` | Update doctor details | Doctor Creator / Staff |
+| `DELETE` | `/api/doctors/<id>/` | Delete a doctor record | Doctor Creator / Staff |
 
 ---
 
 ### 4. Patient-Doctor Mapping APIs
 
-| Method | Endpoint | Description | Auth Required |
+| Method | Endpoint | Description | Authorization |
 |---|---|---|---|
-| `POST` | `/api/mappings/` | Assign a doctor to a patient | Yes |
-| `GET` | `/api/mappings/` | Retrieve all patient-doctor mappings | Yes |
-| `GET` | `/api/mappings/<patient_id>/` | Get all doctors assigned to a patient | Yes |
-| `DELETE` | `/api/mappings/<id>/` | Remove a doctor from a patient (by mapping ID) | Yes |
-
-#### Example: Assign Doctor (`POST /api/mappings/`)
-**Request Body**:
-```json
-{
-  "patient_id": 1,
-  "doctor_id": 1,
-  "notes": "Assigned for diagnostic evaluation and treatment protocol."
-}
-```
-*(Accepts either `patient_id` / `doctor_id` or `patient` / `doctor`).*
-
-**Response (201 Created)**:
-```json
-{
-  "success": true,
-  "message": "Doctor assigned to patient successfully.",
-  "data": {
-    "id": 1,
-    "patient": {
-      "id": 1,
-      "name": "John Doe",
-      "age": 38,
-      "gender": "Male"
-    },
-    "doctor": {
-      "id": 1,
-      "name": "Gregory House",
-      "specialization": "Diagnostic Medicine"
-    },
-    "assigned_date": "2026-10-23T10:35:00Z",
-    "notes": "Assigned for diagnostic evaluation and treatment protocol."
-  }
-}
-```
-
-#### Example: Get Doctors for Patient (`GET /api/mappings/1/`)
-**Response (200 OK)**:
-```json
-{
-  "success": true,
-  "patient_id": 1,
-  "patient_name": "John Doe",
-  "count": 1,
-  "data": [
-    {
-      "id": 1,
-      "patient": { ... },
-      "doctor": {
-        "id": 1,
-        "name": "Gregory House",
-        "specialization": "Diagnostic Medicine",
-        "email": "house@princetonplainsboro.org"
-      },
-      "assigned_date": "2026-10-23T10:35:00Z",
-      "notes": "Assigned for diagnostic evaluation and treatment protocol."
-    }
-  ]
-}
-```
-
-#### Example: Remove Mapping (`DELETE /api/mappings/1/`)
-**Response (200 OK)**:
-```json
-{
-  "success": true,
-  "message": "Doctor removed from patient successfully."
-}
-```
+| `POST` | `/api/mappings/` | Assign a doctor to a patient | Patient Owner / Staff |
+| `GET` | `/api/mappings/` | Retrieve patient-doctor mappings | Authenticated User (Scoped) |
+| `GET` | `/api/mappings/<patient_id>/` | Get all doctors assigned to a patient | Patient Owner / Staff |
+| `DELETE` | `/api/mappings/<id>/` | Remove a doctor from a patient | Patient Owner / Staff |
 
 ---
 
 ## 🧪 Automated Testing
 
-The project includes 29 unit and integration tests covering all critical paths:
+The project includes **41 automated unit and integration tests** covering all positive and negative security/validation paths:
 
 ```bash
 python manage.py test
 ```
 
 ### Test Coverage Highlights:
-- **Authentication**: Registration with valid/invalid data, email normalization, uniqueness validation, password length checks, login token issuance, incorrect password rejection.
-- **Patients**: Creation with JWT token, unauthenticated 401 blocking, input validations (age range, phone), user-level isolation in list endpoint, detail retrieval, updating, deleting.
-- **Doctors**: Creation, duplicate license/email rejection, listing all doctors, retrieving details, update, delete.
-- **Patient-Doctor Mappings**: Assigning doctors, preventing duplicate assignments to the same patient, unauthenticated access blocking, listing all mappings, querying assigned doctors by patient ID, 404 on missing patient, mapping deletion by ID.
+- **Authentication (7 tests)**: Registration with valid data, duplicate email rejection, short password validation, login success, invalid password rejection, nonexistent user rejection, inactive user rejection.
+- **Patients (11 tests)**: Creation when authenticated, unauthenticated 401 check, validation rules, user-scoped list filtering, owner detail access, **IDOR read prevention (404/403)**, **IDOR update prevention (404/403)**, **IDOR delete prevention (404/403)**, staff access, updating, deleting.
+- **Doctors (10 tests)**: Creation with `created_by`, unauthenticated 401 check, duplicate license/email validation, listing all doctors, retrieving details, creator update, **unauthorized user update blocked (403)**, creator delete, **unauthorized user delete blocked (403)**, staff modification and deletion.
+- **Patient-Doctor Mappings (13 tests)**: Assigning doctor by owner, flexible key payloads, **assigning doctor to unowned patient blocked (403)**, duplicate assignment rejection (400), unauthenticated check (401), user-scoped list filtering, owner retrieval of assigned doctors, **unowned patient mapping retrieval blocked (403)**, 404 for nonexistent patient, owner mapping deletion, **unauthorized mapping deletion blocked (403)**, 404 for nonexistent mapping, staff management across all mappings.
 
 ---
 
 ## 📮 Postman Collection Usage
 
 1. Open Postman.
-2. Click **Import** and select the file `Healthcare_Backend.postman_collection.json`.
+2. Click **Import** and select [`Healthcare_Backend.postman_collection.json`](Healthcare_Backend.postman_collection.json).
 3. Set the `base_url` variable (defaults to `http://127.0.0.1:8000`).
 4. Execute **1. Register User** or **Login User**:
    - The test script will **automatically capture the `access_token`** and store it in the collection variables!
-5. All subsequent requests in the `Patients`, `Doctors`, and `Mappings` folders inherit the token automatically.
-
----
-
-## 🔒 Security Best Practices Implemented
-
-- Passwords securely hashed with Django's PBKDF2 algorithm.
-- Environment variables for `SECRET_KEY`, database credentials, and token lifetimes.
-- `IsAuthenticated` default permission class with explicit `AllowAny` only on auth endpoints.
-- Object-level ownership validation for patient records.
-- SQL injection protection via Django ORM parameterized queries.
-- Database constraints (`UniqueConstraint`) preventing duplicate doctor-patient assignments.
+5. All subsequent requests in `Patients`, `Doctors`, and `Mappings` inherit the Bearer token automatically.

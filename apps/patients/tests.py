@@ -19,12 +19,20 @@ class PatientAPITests(APITestCase):
             name='User Two',
             password='Password123!'
         )
+        self.admin_user = CustomUser.objects.create_superuser(
+            email='admin@healthcare.com',
+            name='Admin User',
+            password='AdminPassword123!'
+        )
 
         token1 = RefreshToken.for_user(self.user1)
         self.auth_headers1 = {'HTTP_AUTHORIZATION': f'Bearer {token1.access_token}'}
 
         token2 = RefreshToken.for_user(self.user2)
         self.auth_headers2 = {'HTTP_AUTHORIZATION': f'Bearer {token2.access_token}'}
+
+        token_admin = RefreshToken.for_user(self.admin_user)
+        self.auth_headers_admin = {'HTTP_AUTHORIZATION': f'Bearer {token_admin.access_token}'}
 
         self.list_create_url = reverse('patient-list')
 
@@ -93,7 +101,7 @@ class PatientAPITests(APITestCase):
         self.assertEqual(response_user2.data['data'][0]['name'], 'User2 Patient C')
 
     def test_get_patient_details(self):
-        """Test GET /api/patients/<id>/ returns patient details."""
+        """Test GET /api/patients/<id>/ returns patient details to the owner."""
         patient = Patient.objects.create(
             created_by=self.user1,
             name='Alice Johnson',
@@ -107,8 +115,73 @@ class PatientAPITests(APITestCase):
         self.assertEqual(response.data['data']['name'], 'Alice Johnson')
         self.assertEqual(response.data['data']['id'], patient.id)
 
+    def test_user_cannot_read_other_users_patient(self):
+        """Security/IDOR test: User 2 cannot access User 1's patient details."""
+        patient_user1 = Patient.objects.create(
+            created_by=self.user1,
+            name='Private Patient',
+            age=32,
+            gender='Female',
+            contact_number='5551234567'
+        )
+        detail_url = reverse('patient-detail', kwargs={'pk': patient_user1.id})
+        # User 2 attempts to read User 1's patient
+        response = self.client.get(detail_url, **self.auth_headers2)
+        self.assertIn(response.status_code, [status.HTTP_404_NOT_FOUND, status.HTTP_403_FORBIDDEN])
+
+    def test_user_cannot_update_other_users_patient(self):
+        """Security/IDOR test: User 2 cannot update User 1's patient record."""
+        patient_user1 = Patient.objects.create(
+            created_by=self.user1,
+            name='Original Name',
+            age=40,
+            gender='Male',
+            contact_number='5559876543'
+        )
+        detail_url = reverse('patient-detail', kwargs={'pk': patient_user1.id})
+        update_data = {
+            'name': 'Hacked Name',
+            'age': 41,
+            'gender': 'Male',
+            'contact_number': '5559876543'
+        }
+        # User 2 attempts to update User 1's patient
+        response = self.client.put(detail_url, update_data, format='json', **self.auth_headers2)
+        self.assertIn(response.status_code, [status.HTTP_404_NOT_FOUND, status.HTTP_403_FORBIDDEN])
+        patient_user1.refresh_from_db()
+        self.assertEqual(patient_user1.name, 'Original Name')
+
+    def test_user_cannot_delete_other_users_patient(self):
+        """Security/IDOR test: User 2 cannot delete User 1's patient record."""
+        patient_user1 = Patient.objects.create(
+            created_by=self.user1,
+            name='Protected Patient',
+            age=45,
+            gender='Female',
+            contact_number='5551122334'
+        )
+        detail_url = reverse('patient-detail', kwargs={'pk': patient_user1.id})
+        # User 2 attempts to delete User 1's patient
+        response = self.client.delete(detail_url, **self.auth_headers2)
+        self.assertIn(response.status_code, [status.HTTP_404_NOT_FOUND, status.HTTP_403_FORBIDDEN])
+        self.assertTrue(Patient.objects.filter(id=patient_user1.id).exists())
+
+    def test_staff_can_access_any_patient(self):
+        """Staff user can access and manage any patient."""
+        patient_user1 = Patient.objects.create(
+            created_by=self.user1,
+            name='Patient Under Care',
+            age=60,
+            gender='Male',
+            contact_number='5554433221'
+        )
+        detail_url = reverse('patient-detail', kwargs={'pk': patient_user1.id})
+        response = self.client.get(detail_url, **self.auth_headers_admin)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['data']['name'], 'Patient Under Care')
+
     def test_update_patient(self):
-        """Test PUT /api/patients/<id>/ updates patient details."""
+        """Test PUT /api/patients/<id>/ updates patient details for owner."""
         patient = Patient.objects.create(
             created_by=self.user1,
             name='Bob Brown',
@@ -132,7 +205,7 @@ class PatientAPITests(APITestCase):
         self.assertEqual(patient.age, 46)
 
     def test_delete_patient(self):
-        """Test DELETE /api/patients/<id>/ deletes the record."""
+        """Test DELETE /api/patients/<id>/ deletes the record for owner."""
         patient = Patient.objects.create(
             created_by=self.user1,
             name='Charlie Day',

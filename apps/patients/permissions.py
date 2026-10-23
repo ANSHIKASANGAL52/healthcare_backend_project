@@ -1,15 +1,13 @@
 from rest_framework import permissions
 
 
-class IsOwnerOrReadOnly(permissions.BasePermission):
+class IsPatientOwner(permissions.BasePermission):
     """
-    Object-level permission to only allow owners of an object to edit or delete it.
+    Object-level permission to only allow the user who created the patient (or staff)
+    to view, edit, or delete the patient record.
+    Prevents IDOR (Insecure Direct Object Reference).
     """
 
     def has_object_permission(self, request, view, obj):
-        # Read permissions are allowed to any authenticated request
-        if request.method in permissions.SAFE_METHODS:
-            return True
-
-        # Write permissions are only allowed to the owner or staff
+        # Only the creator of the patient or staff is authorized
         return obj.created_by == request.user or request.user.is_staff

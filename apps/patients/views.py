@@ -1,10 +1,10 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.response import Response
-from drf_spectacular.utils import extend_schema, OpenApiResponse
+from drf_spectacular.utils import extend_schema
 
 from .models import Patient
 from .serializers import PatientSerializer
-from .permissions import IsOwnerOrReadOnly
+from .permissions import IsPatientOwner
 
 
 @extend_schema(tags=['Patients'])
@@ -13,19 +13,18 @@ class PatientViewSet(viewsets.ModelViewSet):
     ViewSet for managing Patient records.
     - POST /api/patients/ : Add a new patient (sets created_by to current user)
     - GET /api/patients/ : Retrieve all patients created by the authenticated user
-    - GET /api/patients/<id>/ : Get details of a specific patient
-    - PUT /api/patients/<id>/ : Update patient details
-    - DELETE /api/patients/<id>/ : Delete a patient record
+    - GET /api/patients/<id>/ : Get details of a specific patient (owner or staff only)
+    - PUT /api/patients/<id>/ : Update patient details (owner or staff only)
+    - DELETE /api/patients/<id>/ : Delete a patient record (owner or staff only)
     """
     serializer_class = PatientSerializer
-    permission_classes = [permissions.IsAuthenticated, IsOwnerOrReadOnly]
+    permission_classes = [permissions.IsAuthenticated, IsPatientOwner]
 
     def get_queryset(self):
-        # List endpoint returns only patients created by the authenticated user
-        if self.action == 'list':
-            return Patient.objects.filter(created_by=self.request.user)
-        # Detail endpoints allow operations on patients created by user (or staff)
-        return Patient.objects.all()
+        # Strictly scope querysets to the authenticated user's records to prevent IDOR
+        if self.request.user.is_staff:
+            return Patient.objects.all()
+        return Patient.objects.filter(created_by=self.request.user)
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)

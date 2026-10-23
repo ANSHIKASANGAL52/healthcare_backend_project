@@ -6,6 +6,8 @@ class DoctorSerializer(serializers.ModelSerializer):
     """
     Serializer for Doctor CRUD operations.
     """
+    created_by_name = serializers.CharField(source='created_by.name', read_only=True)
+
     class Meta:
         model = Doctor
         fields = [
@@ -16,10 +18,12 @@ class DoctorSerializer(serializers.ModelSerializer):
             'phone',
             'email',
             'experience_years',
+            'created_by',
+            'created_by_name',
             'created_at',
             'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_by', 'created_by_name', 'created_at', 'updated_at']
 
     def validate_license_number(self, value):
         stripped = value.strip().upper()

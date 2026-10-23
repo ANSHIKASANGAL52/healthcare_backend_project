@@ -90,3 +90,22 @@ class AuthenticationAPITests(APITestCase):
         response = self.client.post(self.login_url, login_payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(response.data['success'])
+
+    def test_login_inactive_user(self):
+        """Test login fails for deactivated/disabled user."""
+        user = CustomUser.objects.create_user(
+            email='disabled@healthcare.com',
+            name='Disabled User',
+            password='Password123!'
+        )
+        user.is_active = False
+        user.save()
+
+        login_payload = {
+            'email': 'disabled@healthcare.com',
+            'password': 'Password123!'
+        }
+        response = self.client.post(self.login_url, login_payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.data['success'])
+

@@ -4,21 +4,25 @@ from drf_spectacular.utils import extend_schema
 
 from .models import Doctor
 from .serializers import DoctorSerializer
+from .permissions import IsDoctorManagerOrReadOnly
 
 
 @extend_schema(tags=['Doctors'])
 class DoctorViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing Doctor records.
-    - POST /api/doctors/ : Add a new doctor (Authenticated users only)
-    - GET /api/doctors/ : Retrieve all doctors
-    - GET /api/doctors/<id>/ : Get details of a specific doctor
-    - PUT /api/doctors/<id>/ : Update doctor details
-    - DELETE /api/doctors/<id>/ : Delete a doctor record
+    - POST /api/doctors/ : Add a new doctor (Authenticated users only, sets created_by to current user)
+    - GET /api/doctors/ : Retrieve all doctors (Authenticated users)
+    - GET /api/doctors/<id>/ : Get details of a specific doctor (Authenticated users)
+    - PUT /api/doctors/<id>/ : Update doctor details (Creator or staff only)
+    - DELETE /api/doctors/<id>/ : Delete a doctor record (Creator or staff only)
     """
     queryset = Doctor.objects.all()
     serializer_class = DoctorSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsDoctorManagerOrReadOnly]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

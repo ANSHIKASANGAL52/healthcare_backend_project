@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: healthcare_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: healthcare_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d healthcare_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    container_name: healthcare_api
+    restart: always
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - SECRET_KEY=django-insecure-healthcare-backend-super-secret-key-change-in-production
+      - DEBUG=True
+      - ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0,web
+      - DB_ENGINE=django.db.backends.postgresql
+      - DB_NAME=healthcare_db
+      - DB_USER=postgres
+      - DB_PASSWORD=postgrespassword
+      - DB_HOST=db
+      - DB_PORT=5432
+      - USE_SQLITE=False
+      - ACCESS_TOKEN_LIFETIME_MINUTES=60
+      - REFRESH_TOKEN_LIFETIME_DAYS=7
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
